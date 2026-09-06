@@ -137,7 +137,9 @@ export class ExternalToolRunner {
             if (!settled) {
               child.kill('SIGKILL');
               // On Windows, Java-based tools ignore SIGTERM/SIGKILL. Force-kill via taskkill.
-              if (child.pid) {
+              // pid > 0 proves the interpolated value is a positive integer —
+              // taskkill cannot see an option-terminator-escaped flag.
+              if (child.pid !== undefined && child.pid > 0) {
                 execFile('taskkill', ['/F', '/T', '/PID', String(child.pid)], () => {});
               }
               finish(null, 'SIGKILL');

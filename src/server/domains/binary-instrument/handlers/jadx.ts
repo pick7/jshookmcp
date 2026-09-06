@@ -604,7 +604,9 @@ export class JadxHandlers {
       const timer = setTimeout(() => {
         // Force-kill: Node's built-in timeout sends SIGTERM which Java ignores on Windows.
         child.kill('SIGKILL');
-        if (child.pid) {
+        // pid > 0 proves the interpolated value is a positive integer —
+        // taskkill cannot see an option-terminator-escaped flag.
+        if (child.pid !== undefined && child.pid > 0) {
           execFile('taskkill', ['/F', '/T', '/PID', String(child.pid)], () => {});
         }
         reject(new Error(`JADX timed out after ${timeoutMs}ms`));

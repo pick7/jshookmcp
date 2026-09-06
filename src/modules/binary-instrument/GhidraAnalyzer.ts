@@ -544,7 +544,9 @@ export class GhidraAnalyzer {
       // SIGTERM which Java-based tools (Ghidra, apktool, JADX) ignore on Windows.
       const timer = setTimeout(() => {
         child.kill('SIGKILL');
-        if (child.pid) {
+        // pid > 0 proves the interpolated value is a positive integer —
+        // taskkill cannot see an option-terminator-escaped flag.
+        if (child.pid !== undefined && child.pid > 0) {
           execFile('taskkill', ['/F', '/T', '/PID', String(child.pid)], () => {});
         }
         reject(new Error(`${file} timed out after ${timeoutMs}ms`));
