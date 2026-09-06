@@ -2937,7 +2937,7 @@ export const GENERATED_TOOL_CATALOG = [
     tool: {
       name: 'browser_cdp_performance_metrics',
       description:
-        'Atomic primitive: fetch browser runtime metrics via CDP Performance.getMetrics() on the active page. Returns raw CDP-level counters (LayoutCount, RecalcStyleCount, ScriptDuration, TaskDuration, JSHeapUsedSize, Nodes, Documents, Frames, ...) — not Web Vitals (use network domain performance_get_metrics for those).',
+        'Atomic primitive: fetch browser runtime metrics via CDP Performance.getMetrics() on the active page. Returns raw CDP-level counters (LayoutCount, RecalcStyleCount, ScriptDuration, TaskDuration, JSHeapUsedSize, Nodes, Documents, Frames, ...) — not Web Vitals (use browser_get_metrics for those).',
       inputSchema: {
         type: 'object',
         properties: {},
@@ -2992,6 +2992,61 @@ export const GENERATED_TOOL_CATALOG = [
       inputSchema: {
         type: 'object',
         properties: {},
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    domain: 'browser',
+  },
+  {
+    tool: {
+      name: 'browser_cpu_profile_start',
+      description:
+        'Atomic primitive: begin CDP CPU profiling on the active page (Profiler.start). Pair with browser_cpu_profile_stop to save the .cpuprofile. Set samplingInterval to 30-100 µs for high-resolution profiles (default 1000 µs / 1 ms).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          samplingInterval: {
+            type: 'number',
+            description:
+              'Sampling interval in microseconds. Default: 1000 (1ms). 30-100 for high-res. Range: 30-10000',
+            minimum: 30,
+            maximum: 10000,
+          },
+        },
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    domain: 'browser',
+  },
+  {
+    tool: {
+      name: 'browser_cpu_profile_stop',
+      description:
+        'Atomic primitive: stop CDP CPU profiling, rank hot functions by sample count, and persist the raw profile to artifacts/profiles/ (or a custom path). The hot function list is derived from the samples array — modern Chrome profiles do not populate hitCount. Fails clearly if profiling was never started.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          artifactPath: {
+            type: 'string',
+            description: 'Custom output path (omit = auto path under artifacts/profiles/)',
+          },
+          topN: {
+            type: 'number',
+            description: 'Cap the hot-functions list to N entries (default 20)',
+            default: 20,
+            minimum: 1,
+          },
+        },
       },
       annotations: {
         readOnlyHint: true,
@@ -3111,6 +3166,30 @@ export const GENERATED_TOOL_CATALOG = [
         destructiveHint: false,
         idempotentHint: true,
         openWorldHint: true,
+      },
+    },
+    domain: 'browser',
+  },
+  {
+    tool: {
+      name: 'browser_get_metrics',
+      description:
+        'Atomic primitive: collect page performance metrics via PerformanceMonitor — Web Vitals (FCP, LCP, CLS, TTFB), DOM timing (domContentLoaded, loadComplete), engine-level counters (scriptDuration, layoutDuration, recalcStyleDuration) and JS heap sizes (usedJSHeapSize / totalJSHeapSize / jsHeapSizeLimit). Optionally include the raw performance timeline entries. Replaces the legacy network-domain performance_get_metrics (still working as a backward-compat alias).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          includeTimeline: {
+            type: 'boolean',
+            description: 'Include raw performance timeline entries',
+            default: false,
+          },
+        },
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
       },
     },
     domain: 'browser',
@@ -3535,7 +3614,7 @@ export const GENERATED_TOOL_CATALOG = [
           },
           mainWorldEval: {
             type: 'boolean',
-            description: 'Main world eval (camoufox)',
+            description: 'Run page scripts in the main world (camoufox)',
             default: true,
           },
         },
@@ -3867,6 +3946,60 @@ export const GENERATED_TOOL_CATALOG = [
   },
   {
     tool: {
+      name: 'browser_trace_start',
+      description:
+        'Atomic primitive: begin a Chrome performance trace on the active page via page.tracing.start(). Pair with browser_trace_stop to save the trace to disk. Use a sensible categories list when you have a specific hypothesis (e.g. ["devtools.timeline","v8.execute","blink.user_timing"]); the default set covers most profiling needs.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          categories: {
+            type: 'array',
+            items: {
+              type: 'string',
+            },
+            description: 'Trace categories to capture (omit = default set)',
+          },
+          screenshots: {
+            type: 'boolean',
+            description: 'Capture screenshots during tracing',
+            default: false,
+          },
+        },
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    domain: 'browser',
+  },
+  {
+    tool: {
+      name: 'browser_trace_stop',
+      description:
+        'Atomic primitive: stop the Chrome performance trace started by browser_trace_start and persist it to artifacts/traces/ (or to a custom path). Returns event count, file size, and a Chrome DevTools hint. Fails clearly if tracing was never started or has already been stopped.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          artifactPath: {
+            type: 'string',
+            description: 'Custom output path (omit = auto path under artifacts/traces/)',
+          },
+        },
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    domain: 'browser',
+  },
+  {
+    tool: {
       name: 'browser_worker_scripts',
       description:
         'Attach a CDP session to a worker target and dump its parsed scripts (equivalent to get_all_scripts, but scoped to a worker). Debugger.scriptParsed is replayed on Debugger.enable, so already-loaded worker scripts are returned.',
@@ -4087,7 +4220,7 @@ export const GENERATED_TOOL_CATALOG = [
           },
           mainWorldEval: {
             type: 'boolean',
-            description: 'Main world eval (launch)',
+            description: 'Run page scripts in the main world (launch)',
             default: true,
           },
           enableCache: {
@@ -4106,6 +4239,47 @@ export const GENERATED_TOOL_CATALOG = [
       },
     },
     domain: 'browser',
+  },
+  {
+    tool: {
+      name: 'canvas_dump_shaders',
+      description:
+        'Dump the linked shader programs (vertex + fragment source, uniforms) running on the target canvas. Uses engine introspection where available (Three.js renderer.info.programs, BABYLON.Effect.ShadersStore, Laya.Shader registry) and the WEBGL_debug_shaders extension to recover source where the driver allows. Returns programs[] + an honest `reason` when the engine / driver refuses to expose source. Academic basis: WGPULens arXiv 2606.26412 + DarthShader arXiv 2409.01824.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          canvasId: {
+            type: 'string',
+            description: 'Canvas element ID or index to target',
+          },
+          includeUniforms: {
+            type: 'boolean',
+            description: 'Include uniform declarations on each program',
+            default: true,
+          },
+          maxPrograms: {
+            type: 'number',
+            description: 'Cap on programs returned (after engine enumeration)',
+            default: 200,
+            minimum: 1,
+            maximum: 5000,
+          },
+          engine: {
+            type: 'string',
+            description:
+              'Skip auto-detect and force a specific engine path (three|babylon|laya|unknown)',
+          },
+        },
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    domain: 'canvas',
+    profiles: ['full'],
   },
   {
     tool: {
@@ -4174,6 +4348,30 @@ export const GENERATED_TOOL_CATALOG = [
             description:
               'Include frame timeline + stats (avg/p95 frame time, dropped frames, budget misses) in the read result (read only, requires timing=true at install)',
             default: false,
+          },
+        },
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    domain: 'canvas',
+    profiles: ['full'],
+  },
+  {
+    tool: {
+      name: 'canvas_memory_invariants',
+      description:
+        'Assert runtime invariants about WebGL context lifetime, engine state consistency, and texture/program leaks. Reports checks[], violations[] (with severity + safe-cleanup fix), and a recommendations[] block. Honest scope: only JS-observable metrics (DOM canvas count vs live WebGL contexts, renderer.info.memory counts, contextLoss events). Full GC sweep / native-heap inspection is out of scope. Academic basis: JSidentify-V2 arXiv 2508.01655.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          canvasId: {
+            type: 'string',
+            description: 'Canvas element ID or index to target',
           },
         },
       },
@@ -17725,7 +17923,7 @@ export const GENERATED_TOOL_CATALOG = [
     tool: {
       name: 'nemu_set_pac_key',
       description:
-        'Configure the ARMv8.3 Pointer Authentication key set used by PACIA/PACIB/AUTIA/AUTIB instructions in this emulator session. Set a 128-bit key (32 hex chars) by key slot (ia/ib/da/db) to match keys dumped from a real device via Frida, so AUTIA can verify and strip real-hardware PAC signatures.',
+        'Configure the ARMv8.3 Pointer Authentication key set used by PACIA/PACIB/AUTIA/AUTIB/PACGA instructions in this emulator session. Set a 128-bit key (32 hex chars) by key slot (ia/ib/da/db/ga) to match keys dumped from a real device via Frida. Note: the emulator signs with an 8-bit PAC field and a 32→64 duplicated modifier, so AUT of pointers signed by real hardware verifies as a mismatch (stripped in-place, control flow preserved) — round-trips inside the emulator stay self-consistent.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -17739,7 +17937,7 @@ export const GENERATED_TOOL_CATALOG = [
           },
           slot: {
             type: 'string',
-            enum: ['ia', 'ib', 'da', 'db'],
+            enum: ['ia', 'ib', 'da', 'db', 'ga'],
             description: 'Key slot to update',
             default: 'ia',
           },
