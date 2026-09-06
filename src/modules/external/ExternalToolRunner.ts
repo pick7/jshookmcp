@@ -10,7 +10,7 @@
  * - CWD boundary checked against project root
  */
 
-import { spawn, exec } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, relative, sep, isAbsolute } from 'node:path';
@@ -138,7 +138,7 @@ export class ExternalToolRunner {
               child.kill('SIGKILL');
               // On Windows, Java-based tools ignore SIGTERM/SIGKILL. Force-kill via taskkill.
               if (child.pid) {
-                exec(`taskkill /F /T /PID ${child.pid}`, () => {});
+                execFile('taskkill', ['/F', '/T', '/PID', String(child.pid)], () => {});
               }
               finish(null, 'SIGKILL');
             }

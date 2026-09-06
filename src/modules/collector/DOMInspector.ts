@@ -1,15 +1,15 @@
 import type { CDPSession } from 'rebrowser-puppeteer-core';
 import type { CodeCollector } from '@modules/collector/CodeCollector';
 import {
-  buildFindByTextEvaluation,
-  buildFindClickableEvaluation,
-  buildQueryAllEvaluation,
-  buildQuerySelectorEvaluation,
+  findByTextInPage,
+  findClickableInPage,
   getComputedStyleEvaluation,
   getStructureEvaluation,
   getXPathEvaluation,
   isInViewportEvaluation,
   observeDOMChangesEvaluation,
+  querySelectorAllInPage,
+  querySelectorInPage,
   stopObservingDOMEvaluation,
   type DOMInspectorClickableElement,
   type DOMInspectorElementInfo,
@@ -54,15 +54,6 @@ export interface DOMFindClickableResult {
 }
 
 type DOMStructureNode = DOMInspectorStructureNode;
-type DOMEvaluationDiagnostics = Pick<DOMQueryDiagnostics, 'readyState' | 'shadowRootCount'>;
-type DOMQueryAllEvaluationResult = {
-  elements: ElementInfo[];
-  diagnostics: DOMEvaluationDiagnostics;
-};
-type DOMFindClickableEvaluationResult = {
-  elements: ClickableElement[];
-  diagnostics: DOMEvaluationDiagnostics;
-};
 
 /** Cap on caller-supplied selectors / filter text fed into string-built evaluations. */
 const QUERY_INPUT_MAX_CHARS = DOM_QUERY_INPUT_MAX_CHARS;
@@ -153,9 +144,7 @@ export class DOMInspector {
     try {
       assertSafeQueryInput(selector, 'selector');
       const page = await this.collector.getActivePage();
-      const elementInfo = await page.evaluate(
-        new Function(buildQuerySelectorEvaluation(selector)) as () => ElementInfo,
-      );
+      const elementInfo = await page.evaluate(querySelectorInPage, selector);
       logger.info(`querySelector: ${selector} - ${elementInfo.found ? 'found' : 'not found'}`);
       return elementInfo;
     } catch (error) {
@@ -171,12 +160,7 @@ export class DOMInspector {
     try {
       assertSafeQueryInput(selector, 'selector');
       const page = await this.collector.getActivePage();
-      const runQuery = async () =>
-        page.evaluate(
-          new Function(
-            buildQueryAllEvaluation(selector, limit),
-          ) as () => DOMQueryAllEvaluationResult,
-        );
+      const runQuery = async () => page.evaluate(querySelectorAllInPage, selector, limit);
 
       const { result, retried, readyStateStatus } = await this.runQueryWithRetry(page, runQuery);
 
@@ -224,12 +208,7 @@ export class DOMInspector {
     try {
       assertSafeQueryInput(filterText ?? '', 'filterText');
       const page = await this.collector.getActivePage();
-      const runQuery = async () =>
-        page.evaluate(
-          new Function(
-            buildFindClickableEvaluation(filterText),
-          ) as () => DOMFindClickableEvaluationResult,
-        );
+      const runQuery = async () => page.evaluate(findClickableInPage, filterText);
 
       const { result, retried, readyStateStatus } = await this.runQueryWithRetry(page, runQuery);
 
@@ -304,11 +283,7 @@ export class DOMInspector {
     try {
       assertSafeQueryInput(text, 'text');
       const page = await this.collector.getActivePage();
-      const elements = await page.evaluate(
-        new Function(buildFindByTextEvaluation(text, tag)) as () => Array<
-          ElementInfo & { selector: string }
-        >,
-      );
+      const elements = await page.evaluate(findByTextInPage, text, tag);
       logger.info(`findByText: "${text}" - found ${elements.length} elements`);
       return elements;
     } catch (error) {

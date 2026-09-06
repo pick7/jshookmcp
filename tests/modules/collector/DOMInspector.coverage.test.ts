@@ -859,8 +859,8 @@ describe('DOMInspector – additional coverage', () => {
 
       expect(result).toHaveLength(1);
       expect(result[0]?.nodeName).toBe('A');
-      // String-built evaluation (single function arg, no text/tag args).
-      expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function));
+      // Arg-passing contract: the self-contained page function plus text/tag args.
+      expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), 'Link', 'a');
     });
 
     it('returns empty array on error', async () => {

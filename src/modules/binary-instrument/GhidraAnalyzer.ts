@@ -1,4 +1,4 @@
-import { execFile, exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
 import { access, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, normalize, resolve as resolvePath } from 'node:path';
@@ -545,7 +545,7 @@ export class GhidraAnalyzer {
       const timer = setTimeout(() => {
         child.kill('SIGKILL');
         if (child.pid) {
-          exec(`taskkill /F /T /PID ${child.pid}`, () => {});
+          execFile('taskkill', ['/F', '/T', '/PID', String(child.pid)], () => {});
         }
         reject(new Error(`${file} timed out after ${timeoutMs}ms`));
       }, timeoutMs);

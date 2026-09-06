@@ -8,7 +8,7 @@
  */
 
 import { existsSync, statSync, createReadStream } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { UnifiedProcessManager } from '@modules/process/UnifiedProcessManager';
 import { logger } from '@utils/logger';
@@ -425,13 +425,20 @@ export class InjectionValidator {
     try {
       // Escape single quotes in the path for the PowerShell string literal.
       const escaped = executablePath.replace(/'/g, "''");
+      // PowerShell single-quoted strings are literal; '' escapes a quote.
+      // -Command runs via execFileSync so the script never passes through a
+      // cmd.exe shell layer.
       const ps = `(Get-AuthenticodeSignature -LiteralPath '${escaped}') | ForEach-Object { $_.Status.ToString() + '|' + ($_.SignerCertificate.Subject ?? '') }`;
-      const stdout = execSync(ps, {
-        encoding: 'utf8',
-        timeout: 10_000,
-        windowsHide: true,
-        stdio: ['ignore', 'pipe', 'ignore'],
-      }).trim();
+      const stdout = execFileSync(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', ps],
+        {
+          encoding: 'utf8',
+          timeout: 10_000,
+          windowsHide: true,
+          stdio: ['ignore', 'pipe', 'ignore'],
+        },
+      ).trim();
 
       const [statusRaw, signer] = stdout.split('|');
       const status = (statusRaw ?? '').trim();

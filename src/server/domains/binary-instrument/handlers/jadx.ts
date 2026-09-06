@@ -6,7 +6,7 @@
 import { mkdtemp, readFile, rm, mkdir, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { execFile, exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { probeCommand } from '@modules/external/ToolProbe';
 import { JadxSearchEngine } from '@modules/jadx-search';
 import type { JadxSearchOptions } from '@modules/jadx-search';
@@ -605,7 +605,7 @@ export class JadxHandlers {
         // Force-kill: Node's built-in timeout sends SIGTERM which Java ignores on Windows.
         child.kill('SIGKILL');
         if (child.pid) {
-          exec(`taskkill /F /T /PID ${child.pid}`, () => {});
+          execFile('taskkill', ['/F', '/T', '/PID', String(child.pid)], () => {});
         }
         reject(new Error(`JADX timed out after ${timeoutMs}ms`));
       }, timeoutMs);

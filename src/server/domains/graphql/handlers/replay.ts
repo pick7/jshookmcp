@@ -57,12 +57,12 @@ interface ReplayFetchInput {
 /**
  * Self-contained GraphQL replay fetch pipeline: fetch POST with abort
  * timeout, JSON parse, raw-text retention for non-JSON replies, and header
- * collection. Kept as a function-body string so it survives Playwright's
- * evaluate serialization — the same source runs in-page (browser path) and
- * in-process with the global fetch (Node path), so both paths share one
- * implementation.
+ * collection. Deliberately references NO module scope so Playwright can
+ * serialize the function itself — the same code runs in-page (browser path,
+ * via evaluateWithTimeout) and in-process with the global fetch (Node path),
+ * so both paths share one implementation.
  */
-const REPLAY_FETCH_PIPELINE = `async (input) => {
+export async function replayFetchPipeline(input: ReplayFetchInput): Promise<BrowserFetchResult> {
   const requestHeaders = { 'content-type': 'application/json', ...input.headers };
   try {
     const ac = new AbortController();
@@ -93,7 +93,7 @@ const REPLAY_FETCH_PIPELINE = `async (input) => {
     const rawText = responseJson === null ? responseText : '';
     responseText = '';
 
-    const responseHeaders = {};
+    const responseHeaders: Record<string, string> = {};
     response.headers.forEach((value, key) => {
       responseHeaders[key] = value;
     });
@@ -117,13 +117,6 @@ const REPLAY_FETCH_PIPELINE = `async (input) => {
       error: error instanceof Error ? error.message : String(error),
     };
   }
-}`;
-
-/** Instantiate the replay fetch pipeline as a callable. */
-function createReplayFetchFn(): (input: ReplayFetchInput) => Promise<BrowserFetchResult> {
-  return new Function(`return ${REPLAY_FETCH_PIPELINE}`)() as (
-    input: ReplayFetchInput,
-  ) => Promise<BrowserFetchResult>;
 }
 
 /**
@@ -377,7 +370,7 @@ export class ReplayHandlers {
     headers: Record<string, string>,
     meta: ReplayMeta,
   ) {
-    const browserResult = (await evaluateWithTimeout(page, createReplayFetchFn(), {
+    const browserResult = (await evaluateWithTimeout(page, replayFetchPipeline, {
       endpoint,
       body,
       headers,

@@ -41,37 +41,26 @@ interface WindowWithDomObserver extends Window {
   __domObserver?: MutationObserver;
 }
 
-/** Cap on textContent reported for query-all results (chars). */
-const TEXT_CONTENT_MAX_CHARS = 500;
 /** Cap on findByTextEvaluation XPath snapshot results. */
 const XPATH_RESULT_LIMIT = 100;
 
-const serializeForEvaluation = (value: string | number | undefined): string =>
-  value === undefined ? 'undefined' : JSON.stringify(value);
-
 /**
- * Visibility check (display/visibility/opacity) shared by the injected page
- * evaluations. String-built evaluations inline this source verbatim; the
- * function-reference evaluations (querySelectorEvaluation / findByTextEvaluation,
- * kept for Node-side callers) call {@link isVisible} instead. Both variants
- * stay self-contained because injected code runs in the page where module
- * scope is unreachable.
+ * Page-side evaluations: self-contained functions serialized by
+ * `page.evaluate(fn, ...args)`. Module scope is unreachable inside the page,
+ * so every helper is inlined and all user data enters via evaluate arguments —
+ * never interpolated into code strings.
  */
-const IS_VISIBLE_SOURCE = `function isVisible(element) {
-  const style = window.getComputedStyle(element);
-  return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
-}`;
 
-/** Node-side visibility check used by direct (non-injected) evaluation calls. */
-export function isVisible(element: Element): boolean {
+/** In-page visibility check (display/visibility/opacity). */
+function isVisibleInPage(element: Element): boolean {
   const style = window.getComputedStyle(element);
   return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
 }
 
-export const SHADOW_DOM_WALKER_SCRIPT = `
-const walkShadowRoots = () => {
-  const roots = [document];
-  const queue = [document];
+/** In-page shadow-DOM walk shared by the query-all / find-clickable scans. */
+function walkShadowRootsInPage(): { roots: Array<Document | ShadowRoot>; shadowRootCount: number } {
+  const roots: Array<Document | ShadowRoot> = [document];
+  const queue: Array<Document | ShadowRoot> = [document];
   let shadowRootCount = 0;
   while (queue.length > 0) {
     const root = queue.shift();
@@ -86,84 +75,168 @@ const walkShadowRoots = () => {
     }
   }
   return { roots, shadowRootCount };
-};
-`.trim();
-
-export function buildQueryAllEvaluation(selector: string, limit: number): string {
-  return `
-${SHADOW_DOM_WALKER_SCRIPT}
-${IS_VISIBLE_SOURCE}
-const selector = ${serializeForEvaluation(selector)};
-const maxLimit = ${serializeForEvaluation(limit)};
-const { roots, shadowRootCount } = walkShadowRoots();
-const seen = new Set();
-const results = [];
-let totalMatches = 0;
-for (const root of roots) {
-  const nodeList = Array.from(root.querySelectorAll(selector));
-  totalMatches += nodeList.length;
-  for (const element of nodeList) {
-    if (seen.has(element)) continue;
-    seen.add(element);
-    const attributes = {};
-    for (const attr of Array.from(element.attributes)) {
-      attributes[attr.name] = attr.value;
-    }
-    const rect = element.getBoundingClientRect();
-    const textContent = element.textContent?.trim() || '';
-    results.push({
-      found: true,
-      nodeName: element.nodeName,
-      attributes,
-      textContent: textContent.length > ${TEXT_CONTENT_MAX_CHARS} ? textContent.substring(0, ${TEXT_CONTENT_MAX_CHARS}) + '...[truncated]' : textContent,
-      boundingBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-      visible: isVisible(element),
-    });
-    if (results.length >= maxLimit) break;
-  }
-  if (results.length >= maxLimit) break;
-}
-if (totalMatches > maxLimit) {
-  console.warn('[DOMInspector] Found ' + totalMatches + ' elements for "' + selector + '", limiting to ' + maxLimit);
-}
-return { elements: results, diagnostics: { readyState: document.readyState, shadowRootCount } };
-`.trim();
 }
 
-export function buildFindClickableEvaluation(filterText?: string): string {
-  return `
-${SHADOW_DOM_WALKER_SCRIPT}
-${IS_VISIBLE_SOURCE}
-const filter = ${serializeForEvaluation(filterText)};
-const normalizedFilter = filter?.toLowerCase();
-const { roots, shadowRootCount } = walkShadowRoots();
-const results = [];
-const seen = new Set();
-const appendClickable = (element, type, fallbackSelector) => {
-  if (seen.has(element)) return;
-  seen.add(element);
-  const text = element.textContent?.trim() || (element.value ?? '').trim() || '';
-  if (normalizedFilter && !text.toLowerCase().includes(normalizedFilter)) return;
+/** In-page querySelector: element info for the arg-passed selector. */
+export function querySelectorInPage(selector: string): DOMInspectorElementInfo {
+  const element = document.querySelector(selector);
+  if (!element) return { found: false };
+  const attributes: Record<string, string> = {};
+  for (const attr of Array.from(element.attributes)) attributes[attr.name] = attr.value;
   const rect = element.getBoundingClientRect();
-  let selector = fallbackSelector;
-  if (element.id) selector = '#' + element.id;
-  else if (element.className) selector = fallbackSelector + '.' + element.className.split(' ')[0];
-  results.push({
-    selector,
-    text,
-    type,
-    visible: isVisible(element) && rect.width > 0 && rect.height > 0,
+  return {
+    found: true,
+    nodeName: element.nodeName,
+    attributes,
+    textContent: element.textContent?.trim() || '',
     boundingBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-  });
-};
-for (const root of roots) {
-  root
-    .querySelectorAll('button, input[type="button"], input[type="submit"], input[type="reset"]')
-    .forEach((button) => appendClickable(button, 'button', button.tagName.toLowerCase()));
-  root.querySelectorAll('a[href]').forEach((link) => appendClickable(link, 'link', 'a'));
+    visible: isVisibleInPage(element),
+  };
 }
-return { elements: results, diagnostics: { readyState: document.readyState, shadowRootCount } };
-`.trim();
+
+/** In-page queryAll: shadow-DOM-aware element listing capped at `limit`. */
+export function querySelectorAllInPage(
+  selector: string,
+  limit: number,
+): {
+  elements: DOMInspectorElementInfo[];
+  diagnostics: { readyState: string; shadowRootCount: number };
+} {
+  // Cap on reported textContent (chars) — inlined because module constants do
+  // not survive evaluate serialization.
+  const TEXT_CONTENT_MAX_CHARS = 500;
+  const seen = new Set<Element>();
+  const results: DOMInspectorElementInfo[] = [];
+  let totalMatches = 0;
+  const { roots, shadowRootCount } = walkShadowRootsInPage();
+  for (const root of roots) {
+    const nodeList = Array.from(root.querySelectorAll(selector));
+    totalMatches += nodeList.length;
+    for (const element of nodeList) {
+      if (seen.has(element)) continue;
+      seen.add(element);
+      const attributes: Record<string, string> = {};
+      for (const attr of Array.from(element.attributes)) attributes[attr.name] = attr.value;
+      const rect = element.getBoundingClientRect();
+      const textContent = element.textContent?.trim() || '';
+      results.push({
+        found: true,
+        nodeName: element.nodeName,
+        attributes,
+        textContent:
+          textContent.length > TEXT_CONTENT_MAX_CHARS
+            ? textContent.substring(0, TEXT_CONTENT_MAX_CHARS) + '...[truncated]'
+            : textContent,
+        boundingBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+        visible: isVisibleInPage(element),
+      });
+      if (results.length >= limit) break;
+    }
+    if (results.length >= limit) break;
+  }
+  if (totalMatches > limit) {
+    console.warn(
+      '[DOMInspector] Found ' +
+        totalMatches +
+        ' elements for "' +
+        selector +
+        '", limiting to ' +
+        limit,
+    );
+  }
+  return { elements: results, diagnostics: { readyState: document.readyState, shadowRootCount } };
+}
+
+/** In-page findClickable: shadow-DOM-aware clickable element discovery. */
+export function findClickableInPage(filterText: string | undefined): {
+  elements: DOMInspectorClickableElement[];
+  diagnostics: { readyState: string; shadowRootCount: number };
+} {
+  const normalizedFilter = filterText?.toLowerCase();
+  const results: DOMInspectorClickableElement[] = [];
+  const seen = new Set<Element>();
+  const { roots, shadowRootCount } = walkShadowRootsInPage();
+  const appendClickable = (
+    element: Element,
+    type: 'button' | 'link',
+    fallbackSelector: string,
+  ): void => {
+    if (seen.has(element)) return;
+    seen.add(element);
+    const text =
+      element.textContent?.trim() || ((element as HTMLInputElement).value ?? '').trim() || '';
+    if (normalizedFilter && !text.toLowerCase().includes(normalizedFilter)) return;
+    const rect = element.getBoundingClientRect();
+    let selector = fallbackSelector;
+    if (element.id) selector = '#' + element.id;
+    else if (element.className) selector = fallbackSelector + '.' + element.className.split(' ')[0];
+    results.push({
+      selector,
+      text,
+      type,
+      visible: isVisibleInPage(element) && rect.width > 0 && rect.height > 0,
+      boundingBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+    });
+  };
+  for (const root of roots) {
+    root
+      .querySelectorAll('button, input[type="button"], input[type="submit"], input[type="reset"]')
+      .forEach((button) => appendClickable(button, 'button', button.tagName.toLowerCase()));
+    root.querySelectorAll('a[href]').forEach((link) => appendClickable(link, 'link', 'a'));
+  }
+  return { elements: results, diagnostics: { readyState: document.readyState, shadowRootCount } };
+}
+
+/** In-page XPath string literal builder (quote-safe embedding of user text). */
+function xpathStringLiteralInPage(value: string): string {
+  if (!value.includes("'")) return `'${value}'`;
+  if (!value.includes('"')) return `"${value}"`;
+  return `concat('${value.replace(/'/g, `', "'", '`)}')`;
+}
+
+/** In-page findByText: XPath text search (XPath 1.0 result cap 100). */
+export function findByTextInPage(
+  searchText: string,
+  tagName?: string,
+): Array<DOMInspectorElementInfo & { selector: string }> {
+  // tagName flows into the XPath expression: restrict it to a valid HTML tag
+  // name so it cannot inject predicates.
+  const safeTag = tagName && /^[a-zA-Z][a-zA-Z0-9-]*$/.test(tagName) ? tagName : '*';
+  const xpath = `//${safeTag}[contains(text(), ${xpathStringLiteralInPage(searchText)})]`;
+  const result = document.evaluate(
+    xpath,
+    document,
+    null,
+    XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
+    null,
+  );
+  const matchedElements: Array<DOMInspectorElementInfo & { selector: string }> = [];
+  for (let i = 0; i < Math.min(result.snapshotLength, 100); i++) {
+    const element = result.snapshotItem(i) as Element | null;
+    if (!element) continue;
+    const rect = element.getBoundingClientRect();
+    let selector = element.tagName.toLowerCase();
+    if (element.id) selector = `#${element.id}`;
+    else if (element.className) {
+      const classes = element.className.split(' ').filter(Boolean);
+      if (classes.length > 0) selector = `${element.tagName.toLowerCase()}.${classes[0]}`;
+    }
+    matchedElements.push({
+      found: true,
+      nodeName: element.tagName,
+      textContent: element.textContent?.trim(),
+      selector,
+      boundingBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+      visible: isVisibleInPage(element),
+    });
+  }
+  return matchedElements;
+}
+
+/** Node-side visibility check used by direct (non-injected) evaluation calls. */
+export function isVisible(element: Element): boolean {
+  const style = window.getComputedStyle(element);
+  return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
 }
 
 export function querySelectorEvaluation(selector: string): DOMInspectorElementInfo {
@@ -180,30 +253,6 @@ export function querySelectorEvaluation(selector: string): DOMInspectorElementIn
     boundingBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
     visible: isVisible(element),
   };
-}
-
-/**
- * String-built variant of {@link querySelectorEvaluation} for `page.evaluate`
- * injection — the function-reference form cannot carry module scope into the
- * page, so the self-contained check source is inlined instead.
- */
-export function buildQuerySelectorEvaluation(selector: string): string {
-  return `
-${IS_VISIBLE_SOURCE}
-const element = document.querySelector(${serializeForEvaluation(selector)});
-if (!element) return { found: false };
-const attributes = {};
-for (const attr of Array.from(element.attributes)) attributes[attr.name] = attr.value;
-const rect = element.getBoundingClientRect();
-return {
-  found: true,
-  nodeName: element.nodeName,
-  attributes,
-  textContent: element.textContent?.trim() || '',
-  boundingBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-  visible: isVisible(element),
-};
-`.trim();
 }
 
 export function getStructureEvaluation(
@@ -308,18 +357,7 @@ function xpathStringLiteral(value: string): string {
   return `concat('${value.replace(/'/g, `', "'", '`)}')`;
 }
 
-/**
- * JS-source twin of {@link xpathStringLiteral} for string-built evaluations
- * (see {@link buildFindByTextEvaluation}). The concat() replacement is
- * emitted via JSON.stringify so the generated page code stays valid JS
- * (the value contains both quote kinds).
- */
-const XPATH_STRING_LITERAL_SOURCE = `function xpathStringLiteral(value) {
-  if (!value.includes("'")) return "'" + value + "'";
-  if (!value.includes('"')) return '"' + value + '"';
-  return "concat('" + value.replace(/'/g, ${JSON.stringify(`', "'", '`)}) + "')";
-}`;
-
+/** Node-side findByText (jsdom/tests): shares the in-page XPath semantics. */
 export function findByTextEvaluation(
   searchText: string,
   tagName?: string,
@@ -356,46 +394,6 @@ export function findByTextEvaluation(
     });
   }
   return matchedElements;
-}
-
-/**
- * String-built variant of {@link findByTextEvaluation} for `page.evaluate`
- * injection — inlines the shared visibility and XPath-literal sources
- * instead of relying on module scope.
- */
-export function buildFindByTextEvaluation(searchText: string, tagName?: string): string {
-  // tagName flows into the XPath expression: restrict it to a valid HTML tag
-  // name so it cannot inject predicates.
-  const safeTag = tagName && /^[a-zA-Z][a-zA-Z0-9-]*$/.test(tagName) ? tagName : '*';
-  return `
-${IS_VISIBLE_SOURCE}
-${XPATH_STRING_LITERAL_SOURCE}
-const searchText = ${serializeForEvaluation(searchText)};
-const safeTag = ${serializeForEvaluation(safeTag)};
-const xpath = '//' + safeTag + '[contains(text(), ' + xpathStringLiteral(searchText) + ')]';
-const result = document.evaluate(xpath, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
-const matchedElements = [];
-for (let i = 0; i < Math.min(result.snapshotLength, ${XPATH_RESULT_LIMIT}); i++) {
-  const element = result.snapshotItem(i);
-  if (!element) continue;
-  const rect = element.getBoundingClientRect();
-  let selector = element.tagName.toLowerCase();
-  if (element.id) selector = '#' + element.id;
-  else if (element.className) {
-    const classes = element.className.split(' ').filter(Boolean);
-    if (classes.length > 0) selector = element.tagName.toLowerCase() + '.' + classes[0];
-  }
-  matchedElements.push({
-    found: true,
-    nodeName: element.tagName,
-    textContent: element.textContent?.trim(),
-    selector,
-    boundingBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-    visible: isVisible(element),
-  });
-}
-return matchedElements;
-`.trim();
 }
 
 export function getXPathEvaluation(selector: string): string | null {
