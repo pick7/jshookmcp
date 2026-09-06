@@ -89,8 +89,9 @@ export function formatBetterSqlite3Error(error: unknown): string {
 
 function readBetterSqlite3Version(): string | null {
   try {
-    const packageJsonPath = require.resolve('better-sqlite3/package.json');
-    const packageJson = require(packageJsonPath) as BetterSqlite3PackageJson;
+    // Static literal require — the package name is not caller-supplied, so no
+    // dynamic-resolution surface exists for the security scanner to flag.
+    const packageJson = require('better-sqlite3/package.json') as BetterSqlite3PackageJson;
     return packageJson.version ?? null;
   } catch {
     /* v8 ignore next -- CI guarantees node_modules installation */
